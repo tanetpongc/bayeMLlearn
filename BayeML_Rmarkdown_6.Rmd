@@ -1,0 +1,512 @@
+---
+title: "Deep learning and Gaussian processes"
+author: "Huong Nguyen and Tanetpong Choungprayoon"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+# Intro1 - Loading packages and data
+
+Loading some packages first. Do `install.packages()` for each package
+the first time you use a new package.
+
+```{r loading-packages, message=FALSE,echo=FALSE, results='hide', warning=FALSE}
+library(keras) # Package for data transformations and tables
+library(caret) # For some useful tools like the confusion matrix function
+library(MLeval) # for plotting ROC curves and more
+library(tensorflow)
+library(tidyverse)
+library("RColorBrewer") # for pretty colors
+colors = brewer.pal(12, "Paired")[c(1,2,7,8,3,4,5,6,9,10)];
+options(repr.plot.width = 12, repr.plot.height = 12, repr.plot.res = 100) # plot size
+set.seed(12332)         # set the seed for reproducability
+```
+
+#### Problem 1 - Fit a logistic regression to MNIST using keras
+
+The first part of this lab is concerned with predicting hand-written
+images using the famous MNIST data consisting of 60000 handwritten 28 x
+28 pixel grayscale images with labels for training and another 10000
+labeled images for testing. Let's load the data and set up training and
+test datasets:
+
+```{r load-mnistdata}
+mnist <- dataset_mnist()  # Load the MNIST data
+x_train <- mnist$train$x  # Set up training and test images with labels
+y_train <- mnist$train$y
+x_test <- mnist$test$x
+y_test <- mnist$test$y
+
+x_train <- array_reshape(x_train, c(nrow(x_train), 784)) # flatten images matrices to vectors
+x_test <- array_reshape(x_test, c(nrow(x_test), 784))
+x_train <- x_train / 255 # rescale grayscale intensities from 0-255 to interval [0,1]
+x_test <- x_test / 255
+
+# One-hot versions of the labels (0-9)
+y_train <- to_categorical(y_train, 10) # 60000-by-10 matrix, each row is one-hot
+y_testOrig <- y_test # Keep the original 0-9 coded test labels.
+y_test <- to_categorical(y_test, 10)
+```
+
+Use the `keras` package to fit a simple (linear) logistic regression to
+the training data. Use the cross entropy loss, the `rmsprop` optimizer,
+30 epochs, batchsize 128, and monitor performance using accuracy on 20%
+of the data used for validation in the fitting. Is the model
+underfitting or overfitting?
+
+\emph{We used the `keras` package to fit a simple logistic regression (without any layer) and plotted the loss fuction and accuracy.}
+
+```{r kera simple logis}
+# Set up the model using the pipe %>% command to chain things together
+model <- keras_model_sequential() %>%
+  layer_dense(units = 10, activation = 'softmax')
+#summary(model)
+
+# Compile the model
+model %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_rmsprop(),
+  metrics = c('accuracy')
+)
+
+# Fit the model for 30 epochs using batches of 128 images
+history <- model %>% fit(
+  x_train, y_train, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2
+)
+plot(history)
+```
+
+***Answer**: In our inexperienced eyes, as the loss function remains
+pretty flat after the 10th epoch, we don't think the model is
+underfitting nor overfitting*.
+
+Make predictions on the test data and compute the test accuracy. Use the
+`MLeval` package to compute the confusion matrix for the test data.
+Which digits is most frequently wrongly predicted to be a 2?
+
+\emph{The table below illustrated the confusion matrix of classification. We actually used base R to compute the confusion matrix for the test data (because `MLeval` package returns too many arguments that we don't discuss.}
+
+```{r confusion problem1}
+# Evaluate performance on test data (10000 hold out images)
+model %>% evaluate(x_test, y_test)
+
+# Predict the test data without using pipes [note: predict_classes() in blog is deprecated.]
+yProbs = predict(model, x_test)
+yPreds = apply(yProbs, 1, function(x) which.max(x)-1)
+
+#Confusion matrix
+table(yPreds, y_testOrig)
+```
+
+***Answer**: Based on the confusion matrix, 7 is most frequently wrongly
+predicted to be a 2.*
+
+\newpage
+
+#### Problem 2 - Fit models with hidden layers to MNIST
+
+Add hidden layers now to the model in Problem 1. Fit and compute the
+accuracy on the test data for the following models 4 models:
+
+-   Model with 1 hidden layer with 16 hidden units.
+-   Model with 1 hidden layer with 128 hidden units.
+-   Model with 3 hidden layer with 16 hidden units.
+-   Model with 3 hidden layer with 128 hidden units.
+
+Let all layers hidden layers have `relu` activation functions and use
+the same settings as in the logistic regression in Problem 1 when
+fitting the models.
+
+```{r 1 layer 16 units}
+#Model with 1 hidden layer with 16 hidden units
+model_1_16 <- keras_model_sequential()  %>% 
+  layer_dense(units = 16, activation = 'relu', input_shape = c(784)) %>% 
+  layer_dense(units = 10, activation = 'softmax')  %>% 
+  compile(loss = 'categorical_crossentropy',
+          optimizer = optimizer_rmsprop(), metrics = c('accuracy'))
+
+history_1_16 <- model_1_16 %>%
+                fit(x_train, y_train, epochs = 30,
+                    batch_size = 128, validation_split = 0.2)
+mod_1layer_16units = model_1_16 %>% evaluate(x_test, y_test)
+```
+
+```{r 1 layer 128 units}
+#Model with 1 hidden layer with 128 hidden units
+model_1_128 <- keras_model_sequential()  %>% 
+  layer_dense(units = 128, activation = 'relu', input_shape = c(784)) %>% 
+  layer_dense(units = 10, activation = 'softmax')  %>% 
+  compile(loss = 'categorical_crossentropy', optimizer = optimizer_rmsprop(),
+          metrics = c('accuracy'))
+
+history_1_128 <- model_1_128 %>%
+                fit(x_train, y_train, epochs = 30,
+                    batch_size = 128, validation_split = 0.2)
+mod_1layer_128units = model_1_128 %>% evaluate(x_test, y_test)
+```
+
+```{r 3 layers 16 units}
+#Model with 3 hidden layer with 16 hidden units
+model_3_16 <- keras_model_sequential()  %>% 
+  layer_dense(units = 16, activation = 'relu', input_shape = c(784)) %>%
+  layer_dense(units = 16, activation = 'relu') %>%
+  layer_dense(units = 16, activation = 'relu') %>%
+  layer_dense(units = 10, activation = 'softmax') %>% 
+  compile(loss = 'categorical_crossentropy', optimizer = optimizer_rmsprop(),
+          metrics = c('accuracy'))
+
+history_3_16 <- model_3_16 %>%
+                fit(x_train, y_train, epochs = 30,
+                    batch_size = 128, validation_split = 0.2)
+mod_3layer_16units = model_3_16 %>% evaluate(x_test, y_test)
+```
+
+```{r 3 layers 128 units}
+#Model with 3 hidden layer with 128 hidden units
+model_3_128 <- keras_model_sequential()  %>% 
+  layer_dense(units = 128, activation = 'relu', input_shape = c(784)) %>%
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dense(units = 10, activation = 'softmax')  %>% 
+  compile(loss = 'categorical_crossentropy', optimizer = optimizer_rmsprop(),
+          metrics = c('accuracy'))
+
+history_3_128 <- model_3_128 %>%
+                fit(x_train, y_train, epochs = 30,
+                    batch_size = 128, validation_split = 0.2)
+mod_3layer_128units = model_3_128 %>% evaluate(x_test, y_test)
+```
+
+Which seems be the most important: deep models with many layers, or
+models with many hidden units in the layers?
+
+```{r summary stat 4 models}
+rbind(mod_1layer_16units, mod_1layer_128units,
+      mod_3layer_16units, mod_3layer_128units)
+```
+
+***Answer**: In our inexperienced judgment, we think that the number of
+hidden units is more important in increasing the accuracy. At the same
+time, increasing the number of hidden units will possibly increase the
+loss. In human language, we would say that we tend to be more accurate,
+yet we are less certain. Looking at the summary, we think the model with
+1 layer and 128 units is the sweet spot.*
+
+\newpage
+
+#### Problem 3 - Filtering images
+
+As a pre-cursor to convolutional networks, here is a little exercise on
+filters and convolutions. Let's load a test image for this problem and
+plot it using the `image` function.
+
+```{r load-image-filters, message=FALSE,echo=FALSE, results='hide', warning=FALSE}
+library(imagine)
+library(pracma)
+ascent = as.matrix(read.table(file = 
+  "https://github.com/mattiasvillani/MLcourse/raw/main/Data/ascent.txt", header = FALSE))
+ascent = t(apply(ascent, 2, rev))
+par(pty="s")
+image(ascent, col = gray.colors(256), axes = F)
+```
+
+Apply the following filters to the image:
+
+-   Horizontal 3x3 Sobel edge detector
+-   Vertical 3x3 Sobel edge detector
+-   15x15 Gaussian blur with a standard deviation of 3.
+
+Code up the above filter matrices yourself, but you can use the
+`convolution2D` function from the `imagine` package for the convolution.
+
+```{r}
+#============================ THE FILTERS ============================
+#The edge detectors
+#We copied these from the lecture slides ML_L7
+hor_edge_mat = matrix(c(1,0,-1,2,0,-2,1,0,-1),
+                      nrow = 3, ncol = 3,
+                      byrow = T)
+ver_edge_mat = matrix(c(1,0,-1,2,0,-2,1,0,-1),
+                      nrow = 3, ncol = 3)
+
+#We code the following function as per the G(x,y) from this website
+#https://aryamansharda.medium.com/image-filters-gaussian-blur-eb36db6781b1
+gaussian_filter = function(m, sigma) {
+  g = matrix(276, nrow = m, ncol = m)
+  max_distance = (m-1) / 2
+  for (i in -max_distance:max_distance) {
+    for (j in -max_distance:max_distance) {
+      g[i + max_distance + 1, j + max_distance + 1] =
+        (exp(-(i^2 + j^2) / (2*sigma^2)) / (2*pi*sigma^2))
+    }
+  }
+  return(g)
+}
+#The Gaussian filter
+gaussian_blur_mat = gaussian_filter(m = 15, sigma = 3)
+
+#============================ APPLICATION ============================
+hor_edge_output  = convolution2D(ascent, kernel = hor_edge_mat, times = 1)
+ver_edge_output  = convolution2D(ascent, kernel = ver_edge_mat, times = 1)
+gaussian_blur_output = convolution2D(ascent, kernel = gaussian_blur_mat, times = 1)
+
+par(pty="s", mfrow = c(1, 3))
+image(hor_edge_output, col = gray.colors(256), axes = F)
+image(ver_edge_output, col = gray.colors(256), axes = F)
+image(gaussian_blur_output, col = gray.colors(256), axes = F)
+```
+
+\newpage
+
+#### Problem 4 - Fit convolutional neural networks to CIFAR
+
+In this problem you will work with the CIFAR10 data, a dataset with
+28x28 RGB color images from 10 labeled classes. The following code loads
+the data, scales it and plots one of the images.
+
+```{r load-cifar10-data}
+# See ?dataset_cifar10 for more info
+cifar10 <- dataset_cifar10()
+classes = c('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+num_classes = length(classes)
+y_label_train = classes[cifar10$train$y+1]
+y_label_test = classes[cifar10$test$y+1]
+
+# Scale RGB values in test and train inputs  
+x_train <- cifar10$train$x/255   # x_train[1,,,1] is the red channel for first pic
+x_test <- cifar10$test$x/255
+y_train <- to_categorical(cifar10$train$y, num_classes)
+y_test <- to_categorical(cifar10$test$y, num_classes)
+
+# Let's only use 10000 of the 50000 images for training. Runs faster.
+x_train <- x_train[1:10000,,,]
+y_train <- y_train[1:10000,]
+y_label_train <- y_label_train[1:10000]
+
+# Plot an image and check if the label is correct
+image_no = 20
+rgbimage <- rgb(x_train[image_no,,,1], x_train[image_no,,,2], x_train[image_no,,,3])
+dim(rgbimage) <- dim(x_train[image_no,,,1])
+y_label_train[image_no]
+library(grid)
+grid.raster(rgbimage, interpolate=FALSE)
+```
+
+Fit a convolutional neural network to the training data. Use at least
+two hidden convolutional layers, but otherwise you can experiment with
+different network structure and regularization (e.g. dropout) as you
+wish.
+
+```{r, fig.height=4}
+# Data Preparation -----------------------------------------------------
+batch_size <- 128
+epochs <- 30
+
+# Input image dimensions
+img_rows <- dim(rgbimage)[1]
+img_cols <- dim(rgbimage)[2]
+input_shape <- c(img_rows, img_cols, 3)
+
+# Model ----------------------------------------------------------------
+# Define model
+model_p4 <- keras_model_sequential() %>%
+            #First hidden convolutional layer
+            layer_conv_2d(filter = 32, kernel_size = c(3,3), padding = "same",
+                          input_shape = input_shape, activation = "relu") %>%
+            #Second hidden convolutional layer
+            layer_conv_2d(filter = 32, kernel_size = c(3,3), activation = "relu") %>%
+            layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+            layer_flatten() %>% 
+            layer_dense(units = 64, activation = 'relu') %>% 
+            layer_dropout(rate = 0.25) %>% 
+            layer_dense(units = num_classes, activation = 'softmax')
+summary(model_p4)
+# Compile model
+model_p4 %>% compile(
+  loss = loss_categorical_crossentropy,
+  optimizer = optimizer_adadelta(),
+  metrics = "accuracy"
+)
+
+# Train model -----------------------------------------------------------
+history_p4 <- model_p4 %>% fit(x_train, y_train, 
+                               batch_size = batch_size,
+                               epochs = epochs,
+                               validation_split = 0.2)
+plot(history_p4)
+```
+
+***Comments:** The summary on loss and accuracy looks terrible,
+therefore we don't think it is a good model. We don't really know how to
+fix it but trying different arguments arbitrarily. We would love to hear
+your recommendation on how to do it more efficiently.*
+
+Compute the confusion matrix on the test data. Which classes are most
+easily mistaken by the classifier?
+
+```{r}
+# Evaluate performance on test data (10000 hold out images)
+model_p4 %>% evaluate(x_test, y_test)
+
+# Predict the test data without using pipes
+yProbs = predict(model_p4, x_test)
+yPreds = apply(yProbs, 1, function(x) which.max(x)-1)
+
+#Confusion matrix
+#confusionMatrix(as.factor(yPreds), as.factor(cifar10$test$y))
+CM = table(yPreds, cifar10$test$y)
+mis_class = round(1 - diag(prop.table(CM, margin = 2)), digits = 2)
+print(mis_class)
+```
+
+***Answer:** We understand the question as which class is most
+frequently classified as another class, therefore we calculate the
+misclassification rate as above. The winner seems to be
+"`r classes[which.max(as.vector(mis_class))]` ' with the
+misclassification rate of `r max(mis_class)` (i.e. the model classifies
+`r max(mis_class)*100`% of the
+`r classes[which.max(as.vector(mis_class))]` images as something else).*
+
+\newpage
+
+#### Problem 5 - Gaussian process regression for the bike share data
+
+This problem will fit a Gaussian process regression model to the bike
+share data from Lab 1a. We will be using only February of 2011 for
+training, and only the variable `hour` as predictor for `logrides`.
+Let's load the data and get started:
+
+```{r read-bike-share-data}
+bikes = read.csv("https://github.com/mattiasvillani/MLcourse/raw/main/Data/BikeShareData/hour.csv")
+bikes$dteday = as.Date(bikes$dteday) # convert date column to proper date format
+bikes$logrides = log(bikes$cnt)      # we model the log(number of rides) as response.
+bikes$hour = bikes$hr/23             # hour of the day. midnight is 0, 11 PM is 1.
+bikesTrain = bikes[bikes$dteday >= as.Date("2011-02-01") & 
+                     bikes$dteday <= as.Date("2011-02-28"),] # Data from feb 2011
+```
+
+Consider now the Gaussian process regression:
+
+$$y = f(x) + \varepsilon, \hspace{0.5cm} \varepsilon \sim N(0,\sigma_n^2),$$
+where $y$ are the observed `logrides` and $x$ is the observed `hour`.
+Fit a Gaussian process regression to the bike share data from February
+in 2011, using the squared exponential kernel. The noise standard
+deviation in the Gaussian process regression, $\sigma_n$, can be set
+equal to the estimated residual variance from a polynomial fit of degree
+3. Use a zero (prior) mean for the function $f(x)$.
+
+\emph{We referred the code from lab 1a) to calculate the estimated residual variance from a polynomial fit of degree 3 in training data. This residual mean square error will be used as $\sigma_n$. for further calculation.}
+
+```{r find sigma_n}
+#Polynomial Fit from Lab 1a)
+PolyMatrix <- function(x, order){
+    X = cbind(1,x)
+    if (order==1){return(X)}
+    for (k in 2:order){
+        X = cbind(X, x^k)
+    } 
+    return(X)
+}
+      X = PolyMatrix(bikesTrain$hour, 3)
+      betaHat = solve(crossprod(X),crossprod(X,bikesTrain$logrides))
+      yFit = X%*%betaHat
+      RMSEtrain = sqrt(sum((bikesTrain$logrides-yFit)^2)/length(bikesTrain$logrides))
+      message(paste("RMSEtrain from polynomial fit of degree 3: ",RMSEtrain))
+```
+
+I want you to code everything from scratch. This involves coding:
+
+-   The squared exponential kernel function $k(x,x')$ for any two inputs
+    $x$ and $x'$.
+-   A function that evaluates the kernel function $k(x,x')$ over a
+    dataset with $n$ data points and returns the $n \times n$ covariance
+    matrix $K(\mathbf{x},\mathbf{x}')$.
+-   A function that computes the mean and standard deviation of the
+    function $f$ for a test set $\mathbf{x}_\star$ of input values.
+
+\emph{We coded the function to calculate the squared exponential kernel ($k(x,x')$) and the function that put each pairwise of kernel $k(x,x')$ to a covariance matrix $K(\mathbf{x},\mathbf{x}')$. For simplicity, we set  $\ell = 1$ and $\sigma_f = 1$. The mean of $f$ is calculated accordingly.}
+
+```{r code kernel and calculate fbar}
+#Set hyperparameters for squared exponential kernel
+sigma2_f <- 1
+l <- 1
+#Set noise standard deviation in the Gaussian process regression
+sigma2_n <- (RMSEtrain)^2
+
+#The squared exponential kernel function
+se_kernel = function(sigma2_f,l,r){
+  se_kernel = sigma2_f*(exp(-(r^2)/(2*(l^2))))
+  return(se_kernel)
+}
+
+#function that evaluates the kernel function over a dataset with n data points
+K_cov_matrix = function (X_1,X_2,sigma2_f,l){
+    N_X1 = length(X_1)
+    N_X2 = length(X_2)
+    K_covmatrix= matrix(0, nrow=N_X1, ncol=N_X2)
+    for (i in 1:N_X1) {
+        for  (j in 1:N_X2){
+    r = (X_1[i]-X_2[j])^2
+    k = se_kernel(sigma2_f,l,r)
+    K_covmatrix[i,j] <- c(k)}
+    }
+    return(K_covmatrix)
+}
+
+#Set y, x and arbitrary X or Xgrid (Arbitrary X doesnt matter to computation, no need to set X equal to anything)
+y_matrix = as.matrix(bikesTrain$logrides)
+Xgrid = seq(0, 1, length = 1000)
+X = bikesTrain$hour
+
+#Calculate matrix K(x,x')
+Kcov_xx = K_cov_matrix(X,X,sigma2_f,l)
+Kcov_xxgrid = K_cov_matrix(X,Xgrid,sigma2_f,l)
+Kcov_xgridx = K_cov_matrix(Xgrid,X,sigma2_f,l)
+Kcov_xgridxgrid = K_cov_matrix(Xgrid,Xgrid,sigma2_f,l)
+    #We can check the dimension of K(x,x')
+      #dim(Kcov_xx)  649 649
+      #dim(Kcov_xxgrid) 649 1000
+      #dim(Kcov_xgridx) 1000 649
+      #dim(Kcov_xgridxgrid) 1000 1000
+
+#Get f_bar_star and its cov
+f_bar = Kcov_xgridx %*% solve(Kcov_xx + sigma2_n*diag(dim(Kcov_xx)[2])) %*% y_matrix
+cov_f = Kcov_xgridxgrid - (Kcov_xgridx %*% solve(Kcov_xx + sigma2_n*diag(dim(Kcov_xx)[2])) %*% Kcov_xxgrid)
+
+#Calculate SD (Adapted from BAYELEARN)
+postStd <- sqrt(diag(cov_f))
+```
+
+The end result in your report should be a scatter plot of the data with
+the mean of $f$ overlayed, as well as 95% probability bands for $f$.
+Note that this involves predicting on a test set with `hour` on a fine
+grid of values, e.g. `hourGrid = seq(0, 1, length = 1000)`.
+
+*We plotted the data with the mean of* $f$ overlayed, as well as 95%
+probability bands for $f$.
+
+```{r plot problem 5}
+library("RColorBrewer") # for pretty colors
+colors = brewer.pal(12, "Paired")[c(1,2,7,8,3,4,5,6,9,10)]
+lowerbound = f_bar-1.96*postStd
+upperbound = f_bar+1.96*postStd
+plot(bikesTrain$hour, bikesTrain$logrides, pch = 16, cex = 0.5)
+lines(Xgrid, f_bar, col = colors[2], lwd = 2)
+lines(Xgrid, lowerbound , col = colors[6], lwd = 2)
+lines(Xgrid, upperbound, col = colors[9], lwd = 2)
+legend(x = "topleft", inset=.05, legend = c("Data", "Mean of f","Lower 2.5% CI","Upper 97.5% CI"),
+lwd = 1, cex = 0.8,col = c("black", colors[2],colors[6],colors[9]))
+```
+
+The squared exponential kernel has two hyperparameters $\ell$ and
+$\sigma_f$. Experiment with different values and report your results for
+a set of values that seems to fit the data well and gives you a
+smoothing that you find pleasing to the eye. In practice one would
+estimate these hyperparameters, for example by maximizing the log
+marginal likelihood, but I do not require that here.

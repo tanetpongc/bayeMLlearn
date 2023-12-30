@@ -1,0 +1,215 @@
+---
+title: "Polynomial regression and classification with logistic regression"
+output: pdf_document
+author: Huong Nguyen and Tanetpong Choungprayoon
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+  library(tidyverse)
+  library(ggplot2)
+  library(geoR)
+  library(mvtnorm)
+  library(matlib)
+  library(RColorBrewer)
+  prettyCol = brewer.pal(10,"Paired")
+```
+\section{Question 1}
+(a) We simulate draws from the joint prior following these distributions:
+$$\beta|\sigma^2 \sim N(\mu_0, \sigma^2\Omega_0^{-1}) $$
+$$\epsilon \sim N(0, \sigma^2) $$
+$$\sigma^2 \sim Inv - \chi^2 (\nu_0, \sigma_0^2) $$
+We start with the prior hyperparameters as specified in the question. After the simulation, we have a matrix containing the parameters, from which we plot the regression curves as below.
+```{r, echo=FALSE, message=FALSE, out.width = '70%', fig.align='center'}
+mu_0 = t(c(-10,100,-100)); omega_0 = diag(0.01, 3, 3);
+nu_0 = 4; sigma_0 = 1;
+ndraws_prior = 10; 
+set.seed(2706)
+#Draw the prior parameters
+Prior_Simulation = function (ndraws_prior,nu_0,omega_0,mu_0,sigma_0){
+sim_prior= matrix(2706, nrow=ndraws_prior, ncol=4); colnames(sim_prior) <- c("sigma", "beta_0", "beta_1", "beta_2")
+for (i in 1:ndraws_prior) {
+  sim_sigma = rinvchisq(n=1,nu_0, sigma_0)
+  sim_beta = rmvnorm(n=1, mean = mu_0, sigma = sim_sigma*solve(omega_0))
+  sim_prior[i,] <- c(sim_sigma, sim_beta)}
+  return(sim_prior)
+}
+sim_prior_1a = Prior_Simulation(ndraws_prior,nu_0,omega_0,mu_0,sigma_0)
+#Plot the regression curve
+for (i in 1:ndraws_prior){
+  temp_1a = function(time){sim_prior_1a[i,2] + sim_prior_1a[i,3]*time + sim_prior_1a[i,4]*time^2}}
+#plot(time, Y, xlab = "time", ylab = "temp", ylim = c(-40,40), col = "darkgrey");
+curve(temp_1a, from = 0, to = 1, type = "l", ylim = c(-40,40),  col = prettyCol[5], xlab = "time", ylab = "temp")
+for (i in 1:ndraws_prior){
+  curve(temp_1a, from = 0, to = 1, type = "l", ylim = c(-40,40), add = TRUE, col = prettyCol[5])
+  }
+```
+As we do not know much about Swedish weather, we think they look somewhat reasonable and we will work with these parameters for Q1b and Q1c.
+
+(b) We simulate from the joint posterior distribution
+$$\beta|\sigma^2 \sim N(\mu_n, \sigma^2\Omega_n^{-1}) $$
+$$\sigma^2 \sim Inv - \chi^2 (\nu_n, \sigma_n^2) $$
+where $\mu_n, \Omega_n, \nu_n, \sigma_n^2$ are calculated following the formula in Lecture 4.
+```{r, echo=FALSE, message=FALSE}
+{
+#Set up
+  TempLinkoping <-read.table("https://github.com/mattiasvillani/BayesLearnCourse/raw/master/Labs/TempLinkoping.txt", header = T)
+  Y = as.vector(TempLinkoping$temp); time = as.vector(TempLinkoping$time)
+  n =length(Y); ndraws_post = 1000
+  X = matrix(2706, nrow=n, ncol=3); colnames(X) = c("intercept", "time", "time_squared")
+  X[,1] = 1; X[,2] = TempLinkoping$time; X[,3] = TempLinkoping$time^2
+#Draw from posterior 
+Posterior_Simulation = function (ndraws_post,n,X,Y,nu_0,omega_0,mu_0, sigma_0){
+nu_n = n + nu_0
+omega_n = omega_0 + t(X)%*%X
+beta_hat = solve(t(X)%*%X) %*% t(X) %*% Y
+mu_n = solve(omega_n) %*% (t(X)%*%X%*%beta_hat + omega_0%*%t(mu_0))
+sigma_n = (nu_0*sigma_0 + (t(Y)%*%Y) + mu_0%*%omega_0%*%t(mu_0) - t(mu_n)%*%omega_n%*%mu_n)/nu_n
+sim_post = matrix(2706, nrow=ndraws_post, ncol=4)
+colnames(sim_post) <- c("sigma_n", "beta_0_n", "beta_1_n", "beta_2_n")
+for (i in 1:ndraws_post) {
+  sim_sigma_n = rinvchisq(n = 1,df = nu_n, scale = sigma_n)
+  sim_beta_n = rmvnorm(n = 1, mean = mu_n, sigma = sim_sigma_n[1,1]*solve(omega_n))
+  #sim_epsilon_n = rnorm(n = 1, mean = 0, sd = sqrt(sim_sigma_n))
+  sim_post[i,] <- c(sim_sigma_n, sim_beta_n)}
+  return(sim_post)
+}
+}
+```
+ The marginal posteriors of the $\beta$s are plotted as below.
+ 
+```{r, echo=FALSE, message=FALSE, fig.height=3}
+### ANSWER ###
+#Draw from posterior distribution
+set.seed(2706)
+sim_post_1b = Posterior_Simulation(ndraws_post,n,X,Y,nu_0,omega_0,mu_0, sigma_0)
+#Plot marginal posterior of Beta
+{
+par(mfrow = c(1,3))
+hist(sim_post_1b [,"beta_0_n"], breaks = 20, xlab = expression(beta[0]), main = "");
+hist(sim_post_1b [,"beta_1_n"], breaks = 20, xlab = expression(beta[1]), main = "");
+hist(sim_post_1b [,"beta_2_n"], breaks = 20, xlab = expression(beta[2]), main = "");
+mtext("Marginal distribution of the parameters", cex = 0.8, side = 1, line = -22, outer = TRUE)
+par(mfcol=c(1,1))
+}
+```
+
+We then plug the simulated $\beta$ in $f(time)$ and calculate the corresponding $f(time)$ for each value of $time$. We now have a matrix of $n$ (number of observation) columns and $nDraws$ rows. Based on this, we compute the medians and credible intervals of $f(time)$ and plot them in the graph below.
+```{r, echo=FALSE, message=FALSE, out.width = '70%', fig.align='center'}
+#Compute ftime
+compute_ftime = function(sim_post){
+  ftime_tab = matrix(2706, ncol = 366, nrow = ndraws_post)
+  for (i in 1:ndraws_post){
+    ftime = function(time){sim_post[i,2] + sim_post[i,3]*time + sim_post[i,4]*time^2};
+    ftime_tab[i,] = ftime(X[,2]);
+    ftime_ci = matrix(2706, ncol = nrow(X), nrow = 3); rownames(ftime_ci) = c("median", "lower", "upper");
+    for (j in 1: nrow(X)){
+      low_ftime = quantile(ftime_tab[,j], 0.025)
+      up_ftime = quantile(ftime_tab[,j], 0.975)
+      median = median(ftime_tab[,j])
+      ftime_ci[,j] = c(median, low_ftime, up_ftime)
+    }}
+  return(ftime_ci)}
+#Commpute the median and CI for each value of time (time=X)
+ftime_1b = compute_ftime(sim_post_1b);
+{
+plot(Y, xlab = "Day", ylab = "Temp", ylim = c(-25,30), col = "darkgrey", cex.lab = 0.8);
+lines(ftime_1b[1,], col = prettyCol[4]); #median
+lines(ftime_1b[2,], col = prettyCol[2]); #lower
+lines(ftime_1b[3,], col = prettyCol[6]); #upper
+legend("topright", box.lty = 1, c("Median","Lower 2.5% CI","Upper 97.5% CI"), lwd = 1, cex = 0.8, col = c(prettyCol[4],prettyCol[2], prettyCol[6]))
+}
+```
+We think it's fine if the interval bands do or do not contains most of the data points. The intervals reflect our belief about the true values (based on our model), which may be/may not be the true values. And if we change the prior, the intervals change accordingly.
+
+(c) Let $\tilde{x}$ be the $time$ where $f(time)$ is maximal. As $f(time)$ is quadratic, $\tilde{x} = -\beta_1/2\beta_2$. We plug in the simulated $\beta_1$ and $\beta_2$ and we have $\tilde{x}$.
+
+```{r, echo=FALSE, message=FALSE, out.width = '50%', fig.align='center'}
+x_tilde = -sim_post_1b[,"beta_1_n"]/(2*sim_post_1b[,"beta_2_n"])
+hist(x_tilde, breaks = 30, main = "")
+```
+
+(d) Given that we want to estimate a polynomial model of order 7 and we are afraid of over-fitting, we suggest the prior as $\mu_0 = (-10,100,-100,0,0,0,0,0)$ and $\Omega_0 = diag(0.01,0.01,0.01,0.5,0.5,0.5,0.5,0.5)$. for the higher order terms, we make the $\mu_0$ closer to 0 and $\lambda$ higher than the lower order terms.
+
+\section{Question 2}
+(a) We first fit the logistic regression using MLE.
+```{r echo=FALSE, results=TRUE}
+womanwork <- read.table("https://github.com/mattiasvillani/BayesLearnCourse/raw/master/Labs/WomenWork.dat", header=TRUE)
+glmModel <- glm(Work~0+., data = womanwork, family=binomial)
+summary(glmModel)
+```
+
+(b) We now approximate the posterior distribution of $\beta$ with a multivariate normal distribution
+$$ \beta|y, X \sim N (\tilde{\beta}, J_y^{-1}(\tilde{\beta}))$$
+```{r, echo=FALSE, message=FALSE}
+#Q2b
+y_q2 <- as.vector(womanwork[,1]); X_q2 <- as.matrix(womanwork[,2:9]); tau = 10;
+covNames <- names(womanwork)[2:length(names(womanwork))]; nPara <- dim(X_q2)[2];
+# Setting up the prior
+mu_q2 <- as.vector(rep(0,nPara)); sigma_q2 <- tau^2*diag(nPara);
+
+# Coding up the log posterior function
+LogPostLogistic <- function(betaVect,y_q2,X_q2,mu_q2,sigma_q2){
+  nPara <- length(betaVect);
+  linPred <- X_q2%*%betaVect;
+  logLik <- sum(linPred*y_q2 -log(1 + exp(linPred)));
+  logPrior <- dmvnorm(betaVect, matrix(0,nPara,1), sigma_q2, log=TRUE);
+  return(logLik + logPrior)}
+
+initVal <- as.vector(glmModel$coefficients); 
+OptimResults<-optim(initVal,LogPostLogistic,gr=NULL,y_q2,X_q2,mu_q2,sigma_q2,
+                    method=c("BFGS"), control=list(fnscale=-1),hessian=TRUE)
+postMode = OptimResults$par
+postCov = -solve(OptimResults$hessian) # inv(J) - Approx posterior covariance matrix
+postStd <- sqrt(diag(postCov)) # Computing approximate stdev
+names(postMode) <- covNames      # Naming the coefficient by covariates
+names(postStd) <- covNames # Naming the coefficient by covariates
+colnames(postCov) <- covNames; rownames(postCov) <- covNames;
+#NSmallChild 95% CI
+NSmallChild_ci = c("2.5%" = postMode['NSmallChild']-1.96*postStd['NSmallChild'],
+                   "97.5%" = postMode['NSmallChild']+1.96*postStd['NSmallChild'])
+```
+Using ```optim.R```, the prior given in the question and the MLE results as initial values, $\tilde{\beta}$ are estimated as
+
+```{r, echo=FALSE}
+print(round(postMode, digits = 3))
+```
+and $J_y^{-1}(\tilde{\beta})$ are estimated as
+```{r, echo=FALSE}
+print(round(postCov, digits = 5))
+```
+
+The approxiate 95% credible interval for the coefficient on ``NSmallChild`` is
+
+```{r, echo=FALSE}
+print(round(NSmallChild_ci, digits = 3))
+```
+(c) We now simulate from the predictive distribution of the response variable in a logistic regression.
+* We first draw a vector of $\beta$ from $N (\tilde{\beta}, J_y^{-1}(\tilde{\beta}))$
+* We then plug the simulated $\beta$ and the $x$ with the conditions in the question in the logistic regression and compute $Pr(y=1|\beta,x)$
+* We draw $y \sim Bern(Pr(y=1|\beta,x))$
+* We repeat ```nSim = 1000``` times.
+
+The predictive distribution of the ```work``` variable of woman we want to predict is plotted below.
+
+```{r, echo=FALSE, message=FALSE, out.width = '80%', fig.align='center'}
+x_2c = c(1,10,8,10,1,40,1,1); nSim = 1000;
+prob_work = rep(0,nSim); work_predict = rep(0,nSim)
+set.seed(2706)
+for (i in 1:nSim){
+  betaDraw = as.vector(rmvnorm(1, postMode, postCov)) # Simulate a beta draw from approx post
+  linPred = t(x_2c)%*%betaDraw
+  prob_work[i] = exp(linPred)/(1+exp(linPred)) # draw from posterior of Pr(work|x)
+  work_predict[i] = rbinom(n=1,size=1,prob_work[i]) # draw from model given prob_work[i]
+}
+par(mfrow=c(1,2))
+hist(prob_work, freq = FALSE, ylab= "", xlab = ("Pr(work)"), ylim = c(0,5),cex.main = 0.8,
+     main = "Posterior distribution for Pr(work|woman Q2c)")
+barplot(c(sum(work_predict==0),sum(work_predict==1))/nSim, names.arg  = c("Not Work","Work"), ylim = c(0,1),
+        main = "Predictive distribution Q2c", cex.main = 0.8)
+par(mfcol=c(1,1))
+```
+

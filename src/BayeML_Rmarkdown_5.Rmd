@@ -1,0 +1,309 @@
+---
+title: "Regularized classification"
+author: "Huong Nguyen and Tanetpong Choungprayoon"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+---
+
+# Intro1 - Loading packages and data
+
+Loading some packages first. Do `install.packages()` for each package the first time you use a new package.
+
+```{r loading-packages, echo=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(fig.width=5, fig.height=3, fig.align = "center", message=FALSE) 
+suppressMessages(library(dplyr)) # Package for data transformations and tables
+library(caret)  # Fitting ML models with CV and more
+library(MLeval) # for plotting ROC curves and more
+library("RColorBrewer") # for pretty colors
+colors = brewer.pal(12, "Paired")[c(1,2,7,8,3,4,5,6,9,10)];
+options(repr.plot.width = 12, repr.plot.height = 12, repr.plot.res = 100) # plot size
+set.seed(12332)         # set the seed for reproducability
+```
+
+```{r load-ebaydata}
+eBayData = read.csv('https://github.com/mattiasvillani/MLcourse/raw/main/Data/eBayData.csv', sep = ',')
+eBayData = eBayData[-1] # Remove a variable that we will not use.
+eBayData['Sold'] = as.factor((eBayData['Sold']==1)) # Changing from 1->TRUE, 0->FALSE
+levels(eBayData$Sold) <- c("notsold","sold")
+```
+
+Split the data using the `createDataPartition` function in `caret` to get 75% of the data for training and 25% for testing.\
+The default method in `caret` is stratified sampling, keeping the same fraction of positive and negative observations in both training and test datasets.
+
+```{r training-test-split}
+set.seed(123)
+inTrain <- createDataPartition(
+  y = eBayData$Sold,
+  p = .75, # The percentage of data in the training set
+  list = FALSE
+)
+training = eBayData[ inTrain,]
+testing  = eBayData[-inTrain,]
+
+message(paste("Percentage of training auctions where the object was sold:", 
+              100*sum(training['Sold']=="sold")/dim(training)[1]))
+message(paste("Percentage of test auctions where the object was sold:", 
+              100*sum(testing['Sold']=="sold")/dim(testing)[1]))
+```
+
+Let's get started by with a logistic regression with the following steps:
+
+-   fit a logistic regression on the training data using maximum likelihood with the `glm` function from the basic `stats` package in R.
+-   predict the test data using the rule $\mathrm{Pr}(y=1|\mathbf{x})>0.5 \Rightarrow y=1$
+-   compute the confusion matrix (using `caret`), and the usual measurements of predictive performance for binary data.
+
+```{r fit-glm, include=FALSE}
+glmFit = glm(Sold ~ ., family = binomial, data = training)
+yProbs = predict(glmFit, newdata = testing, type = "response")
+threshold = 0.5 # Predict Sold if yProbs>threshold
+yPreds = as.factor(yProbs>threshold)
+levels(yPreds) <- c("notsold","sold")
+confusionMatrix(yPreds, testing$Sold, positive = "sold")
+```
+
+\newpage
+
+#### Problem 1
+
+-   1a) Reconstruct the 2-by-2 confusion matrix for the test data without using a package, i.e. code it up from yPreds and testing\$Sold yourself.
+
+```{r confusion matrix}
+    table(yPreds, testing$Sold)
+```
+
+-   1b) Use the confusion matrix in 1a) to compute the accuracy, sensitivity and specificity and the classifier.
+
+```{r the rates}
+    TPR_FPR_calculator = function(yPreds, yTrue){
+    #Constructing the confusion matrix
+    confusion_matrix = table(yPreds, yTrue)
+    tp = confusion_matrix[2,2]
+    tn = confusion_matrix[1,1]
+    fp = confusion_matrix[2,1]
+    fn = confusion_matrix[1,2]
+    return(c(
+      accuracy = (tp + tn) / sum(confusion_matrix),
+      sensitivity = tp / (tp + fn), #TPR
+      specificity = tn / (tn + fp),
+      FPR = fp / (fp + tn)
+    ))
+    }
+
+    #Print out the results
+    TPR_FPR_calculator(yPreds, testing$Sold)
+```
+
+-   1c) Compute the ROC curve from the above fitted glm model and plot it. No packages allowed.
+
+```{r}
+    #Prep
+    thres = seq(from = 0,to = 1, by = 0.001)
+    tab1c = matrix(276, nrow = length(thres), ncol = 3)
+    colnames(tab1c) = c("threshold", "TPR", "FPR")
+
+    #calculating the TPR and FPR for different thresholds
+    for(i in 1:length(thres)){
+    yPreds = as.factor(yProbs>thres[i])
+    levels(yPreds) <- c("notsold","sold")
+    tab1c[i,1] = thres[i]
+    tab1c[i,2] = TPR_FPR_calculator(yPreds = yPreds, yTrue = testing$Sold)[[2]]
+    tab1c[i,3] = TPR_FPR_calculator(yPreds = yPreds, yTrue = testing$Sold)[[4]]
+    }
+```
+
+We compute and plot the ROC for `r length(thres)` values of thresholds from 0 to 1.
+
+```{r roc, fig.height=4, fig.width=6}
+ #plot the ROC
+    plot(tab1c[,"FPR"], tab1c[,"TPR"],
+         xlab = "False positive rate",
+         ylab = "True positive rate",
+         type = "l")
+```
+
+\newpage
+
+# Intro2 - Using the caret package
+
+Let's use the `caret` package to fit a **elastic net** classifier where the two hyperparameters $\alpha$ and $\lambda$ are chosen by 10-fold cross-validation.
+
+```{r elastic-net-caret}
+cv10 <- trainControl(
+  method = "cv", 
+  number = 10, # number of folds
+  classProbs = TRUE, 
+  summaryFunction = twoClassSummary, # Standard summary for binary outcomes
+  savePredictions = TRUE # Important, otherwise MLeval below will not work.
+)
+glmnetFit <- train(
+  Sold ~ .,
+  data = training,
+  method = "glmnet",
+  preProc = c("center", "scale"), # the covariates are centered and scaled
+  tuneLength = 10, # The number of tuning parameter values to try
+  trControl = cv10,
+  metric = "ROC"
+)
+```
+
+The `MLeval` package can be used to plot ROC curves from model fit with `caret`. By just supplying the fitted model object `glmnetFit` to the function we get the cross-validated results from the training data, i.e. this evaluation is not evaluating against the `testing` data. S
+
+The optimal model returned in the caret object `glmnetFit` can be directly used for prediction of the test data. The `MLeval` package can again be used for the evaluation, this time on the `testing` data.
+
+\newpage
+
+#### Problem 2
+
+Fit a random forest using the `rf` package in `caret` to the training data with tuning parameters chosen by 10-fold cross-validation. Plot the ROC curve and compute AUC for the `testing` data using the package `MLeval`. Compute also the accuracy and recall on the `testing` data.
+
+```{r rf}
+#Fit RF
+rfFit <- train(
+  Sold ~ .,
+  data = training,
+  method = "rf",
+  preProc = c("center", "scale"),# the covariates are centered and scaled
+  tuneLength = 10,# The number of tuning parameter values to try
+  trControl = cv10,
+  metric = "ROC"
+)
+
+#ROC on testing data
+yPreds_p2 = predict(rfFit, newdata = testing)
+yProbs_p2 = predict(rfFit, newdata = testing, type = "prob")
+CM_p2 = confusionMatrix(yPreds_p2, testing$Sold, positive = "sold")
+
+par(par(mfrow = c(1, 2)))
+#ROC on training data
+rfEval_p2 = evalm(rfFit, plots = 'r', rlinethick = 0.8, fsize = 8,
+                  title = "ROC on training data") # plots='r' gives ROC
+
+res_p2 = evalm(data.frame(yProbs_p2, testing$Sold), plots='r', rlinethick=0.8, fsize=8,
+               title = "ROC on testing data")
+
+accuracy_p2 = (CM_p2$table[1,1]+CM_p2$table[2,2])/(sum(CM_p2$table))
+recall_p2 = CM_p2$byClass["Recall"]
+```
+
+The accuracy and recall on testing data are `r accuracy_p2` and `r recall_p2`, respectively.
+
+#### Problem 3
+
+Same as Problem 2, but using the k-nearest neighbor classifier `knn` in caret, with $k$ chosen by 10-fold cross-validation between $k=1$ and $k=10$. You need to use the `tuneGrid` option instead of the `tuneLength` option in `caret` for this.
+
+```{r knn}
+#Fit kNN
+knnFit <- train(
+  Sold ~ .,
+  data = training,
+  method = "knn",
+  preProc = c("center", "scale"),# the covariates are centered and scaled
+  tuneGrid = expand.grid(k = c(1:10)),
+  trControl = cv10,
+  metric = "ROC"
+)
+
+#ROC on training data
+rfEval_p3 = evalm(knnFit, plots = 'r', rlinethick = 0.8, fsize = 8, 
+                  title = "ROC on training data") # plots='r' gives ROC
+
+#ROC on testing data
+yPreds_p3 = predict(knnFit, newdata = testing)
+yProbs_p3 = predict(knnFit, newdata = testing, type = "prob")
+CM_p3 = confusionMatrix(yPreds_p3, testing$Sold, positive = "sold")
+res_p3 = evalm(data.frame(yProbs_p3, testing$Sold), plots='r',
+               rlinethick=0.8, fsize=8, title = "ROC on testing data")
+```
+
+#### Problem 4
+
+Same as Problem 2, but using stochastic gradient boosting through the `gbm` package in `caret`. There are four tuning parameters here, but you can keep two of them fixed in the training: `n.trees = 100` and `n.minobsinnode = 10`. You need to use the `tuneGrid` option instead of the `tuneLength` option in `caret` for this. Just before the tuneGrid argument in the train function, you can add the argument `verbose = FALSE` to avoid unnecessary messages from being printed during the training process.
+
+```{r gbm}
+#Fit gbm
+gbmGrid = expand.grid(n.trees = 100,
+                      interaction.depth = 1:3,
+                      shrinkage = seq(0, 1, by = 0.1),
+                      n.minobsinnode = 10)
+
+gbmFit <- train(
+  Sold ~ .,
+  data = training,
+  method = "gbm",
+  preProc = c("center", "scale"),# the covariates are centered and scaled
+  verbose = FALSE,
+  tuneGrid = gbmGrid,
+  trControl = cv10,
+  metric = "ROC"
+)
+
+#ROC on training data
+gbmEval_p4 = evalm(gbmFit, plots = 'r', rlinethick = 0.8, fsize = 8,
+                   title = "ROC on training data") # plots='r' gives ROC
+
+#ROC on testing data
+yPreds_p4 = predict(gbmFit, newdata = testing)
+yProbs_p4 = predict(gbmFit, newdata = testing, type = "prob")
+CM_p4 = confusionMatrix(yPreds_p4, testing$Sold, positive = "sold")
+res_p4 = evalm(data.frame(yProbs_p4, testing$Sold), plots='r',
+               rlinethick=0.8, fsize=8, title = "ROC on testing data")
+```
+
+#### Problem 5
+
+Same as Problem 2, but using any model from `caret` that you are curious about. Here is the [list of models](https://topepo.github.io/caret/available-models.html) in `caret`.
+
+\emph{We used Naive Bayes method for this problem.}
+
+```{r nb, warning=FALSE}
+#package klaR is required
+nbFit <- train(
+  Sold ~ .,
+  data = training,
+  method = "nb",
+  preProc = c("center", "scale"),
+  tuneLength = 10,
+  trControl = cv10,
+  metric = "ROC"
+)
+
+#ROC on training data
+nbEval_p5 = evalm(nbFit, plots = 'r', rlinethick = 0.8, fsize = 8,
+                  title = "ROC on training data") # plots='r' gives ROC
+
+#ROC on testing data
+yPreds_p5 = predict(nbFit, newdata = testing)
+yProbs_p5 = predict(nbFit, newdata = testing, type = "prob")
+CM_p5 = confusionMatrix(yPreds_p5, testing$Sold, positive = "sold")
+res_p5 = evalm(data.frame(yProbs_p5, testing$Sold), plots='r',
+               rlinethick=0.8, fsize=8, title = "ROC on testing data")
+```
+
+\newpage
+
+#### Problem 6
+
+Plot the ROC curves on the `testing` data from models fit under Problem 2-6 in a single plot. [Hint: the `evalm` function in the `MLeval` package can plot for more than one model.]
+
+```{r}
+#ROC on training data
+res = evalm(list(knnFit, rfFit, gbmFit, nbFit),
+            gnames = c("kNN", "random forest", "stochastic gradient boosting", "naive bayes"),
+            plots='r', rlinethick=0.8, fsize=8, title = "ROC on training data")
+
+#ROC on testing data
+df.p2 = data.frame(yProbs_p2, testing$Sold)
+df.p2$Group <- "random forest"
+df.p3 = data.frame(yProbs_p3, testing$Sold)
+df.p3$Group <- "kNN"
+df.p4 = data.frame(yProbs_p4, testing$Sold)
+df.p4$Group <- "stochastic gradient boosting"
+df.p5 = data.frame(yProbs_p5, testing$Sold)
+df.p5$Group <- "naive bayes"
+testingdata <- rbind(df.p2,df.p3,df.p4,df.p5)
+testing_ROC <- evalm(testingdata,plots='r',rlinethick=0.8,fsize=8,bins=8,
+                     title = "ROC on testing data")
+```

@@ -1,0 +1,479 @@
+---
+title: "Regularized regression"
+author: "Huong Nguyen and Tanetpong Choungprayoon"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+---
+
+#### Problem 1 - Polynomial regression  
+
+
+\emph{We set library and import the data we will use as well as set the training and testing data.}
+```{r load-packages-and-set-options, echo=FALSE, results='hide', warning=FALSE}
+library("RColorBrewer") # for pretty colors
+colors = brewer.pal(12, "Paired")[c(1,2,7,8,3,4,5,6,9,10)]
+set.seed(123342)         # set the seed for reproducability
+suppressMessages(library(tidyverse)) #for dplyr and ggplot
+suppressMessages(library(reshape2)) #to melt for ggplot
+```
+
+```{r read-bike-share-data}
+bikes = read.csv("https://github.com/mattiasvillani/MLcourse/raw/main/Data/BikeShareData/hour.csv")
+bikes$dteday = as.Date(bikes$dteday) # convert date column to proper date format
+bikes$logrides = log(bikes$cnt)      # we model the log(number of rides) as response.
+bikes$hour = bikes$hr/23             # hour of the day. midnight is 0, 11 PM is 1.
+# Training data in Feb-March
+bikesTrain = bikes[bikes$dteday >= as.Date("2011-02-01") & 
+                     bikes$dteday <= as.Date("2011-03-31"),] # Data from feb and march 2011
+# Prediction on test data in April-May
+bikesTest = bikes[bikes$dteday >= as.Date("2011-04-01") & 
+                  bikes$dteday <= as.Date("2011-05-31"),] # Test on following two months
+```
+
+Code everything from scratch on this problem, no `lm()` or anything. You **can** however use the functions defined in this note book, for example `PolyPlotFit`. Do this:
+
+-   Fit a polynomial regression of `logRides` against the covariate `hour` to the training data (Feb 1, 2011 - March 31, 2011) using a polynomials of order 8. Plot the fit of the model overlayed on the scatter of training data.
+
+\emph{We used the `PolyPlotFit` from the example to fit our polynomial regression.}
+```{r polyplot function}
+# Function that computes the basis function for a vector of x-values. 
+PolyMatrix <- function(x, order){
+    X = cbind(1,x)
+    if (order==1){return(X)}
+    for (k in 2:order){
+        X = cbind(X, x^k)
+    } 
+    return(X)
+}
+# Function that trains a polynomial model, 
+PolyPlotFit <- function(x, y, order, xGrid){
+    X = PolyMatrix(x, order)
+    betaHat = solve(crossprod(X),crossprod(X,y))
+    Xgrid = PolyMatrix(xGrid, order)
+    yFit = Xgrid%*%betaHat
+    plot(x, y, pch = 16, cex = 0.5)
+    lines(xGrid, yFit, col = colors[2], lwd = 2)
+    legend(x = "topleft", inset=.05, legend = c("Data", "Fit"),  
+       lty = c(NA, 1), lwd = c(2, 2), pch = c(16, NA),
+       col = c("black", colors[2]))
+}
+```
+
+\emph{We fitted a polynomial regression of `logRides` against the covariate `hour` to the training data (Feb 1, 2011 - March 31, 2011) using a polynomials of order 8 and plotted the fit of the model overlayed on the scatter of training data.}
+```{r fit polynomial order 8}
+xGrid = seq(0, 1, length = 100)
+poly_8 = PolyPlotFit(bikesTrain$hour, bikesTrain$logrides, order = 8, xGrid)
+```
+
+-   Fit polynomials with order varying between 1 and 10 on the training data. Plot the training RMSE as a function of the polynomial order.
+
+-   For each polynomial order between 1 and 10, use the trained model to predict the `logRides` on the test set consisting of the following 2 months between April 1, 2011 - May 31, 2011. Compute the test RMSE for each polynomial order and plot it in the same plot as the training RMSE.
+
+\emph{We wrote a fuction that calculate RMSE for polynomial order between 1 and 10 and then plot it as follows.}
+
+```{r RMSE function}
+    Poly_RMSE <- function(xTrain, yTrain, xTest, yTest, order){
+      #Training
+      X = PolyMatrix(xTrain, order)
+      betaHat = solve(crossprod(X),crossprod(X,yTrain))
+      yFit = X%*%betaHat
+      RMSEtrain = sqrt(sum((yTrain-yFit)^2)/length(yTrain))
+     
+      #Testing
+      XTest = PolyMatrix(bikesTest$hour, order)
+      yPred = XTest%*%betaHat
+      RMSEtest = sqrt(sum((yTest-yPred)^2)/length(yTest))
+      
+      #print(paste(RMSEtrain, RMSEtest))
+      return(c(RMSEtrain, RMSEtest))
+      }
+
+      # Calculating the train and test RMSE
+      RMSE_table = matrix(276, nrow = 10, ncol = 3);
+      colnames(RMSE_table) = c("order", "RMSEtrain", "RMSEtest")
+      for (i in 1:10){
+      RMSE_table[i,1] = i
+      RMSE_table[i,2:3] = Poly_RMSE(xTrain = bikesTrain$hour, yTrain = bikesTrain$logrides,
+          xTest = bikesTest$hour, yTest = bikesTest$logrides,
+          order = i)
+      } 
+      
+      ggplot(data = melt(RMSE_table[, 2:3], id.var = "order"),
+             aes(x = Var1, y = value, colour = Var2)) + geom_line() +
+             scale_x_continuous(breaks = 1:10) + xlab("order")
+```
+
+-   Comment on the difference of the RMSE on the training and test data: are we overfitting or underfitting the data? Other explanation of the results?
+
+\emph{Both the RMSE on the train data and test data keep decreasing as we increase the number of polynomials order. However the RMSE on these data remain the same after the polynomials of order 8. There seems no evidence of overfitting.}
+
+\newpage
+#### Problem 2 - Spline regression with L2 regularization
+
+Use the package `glmnet` to fit a spline regression with equally spaced knots for `hour` between 0.05 and 0.95. Use L2-regularization and find the optimal $\lambda$ by $10$-fold cross-validation on the training data using the one-standard deviation rule (lambda.1se). Use the `splines` package in R to create natural cubic splines basis functions with 10 degrees of freedom, i.e. use the `ns()` function with df=10 as input argument. Compute the RMSE in training (Feb-March) and test (April-May).
+
+\emph{We used the `splines` package in R to create natural cubic splines basis functions with 10 degrees of freedom for x or `hour` and used the package `glmnet` to compute the regularized parameters. We set $\alpha$ to $0$ for L2-regularization or Ridge regression. Please note that we set 10-fold cross validation using `cv.glmnet` and its default setting to find the optimal optimal $\lambda$.}
+
+```{r spline L2, warning=FALSE}
+suppressMessages(library(splines))
+suppressMessages(library(glmnet))
+
+#data prep
+xTrain = ns(bikesTrain$hour, df = 10)
+xTest = ns(bikesTest$hour, df = 10)
+yTrain = bikesTrain$logrides
+yTest = bikesTest$logrides
+
+#splined glmnet
+splined_glm = glmnet(xTrain, yTrain)
+cv_glm_l1 = cv.glmnet(xTrain, yTrain, nfolds = 10, alpha = 0,
+                      type.measure = "default") 
+
+message(paste("The optimal Lambda for L2: ",cv_glm_l1$lambda.1se))
+#plot(cv_glm_l1)
+
+#calculate the RMSE
+beta_p2 = coef(cv_glm_l1, s = "lambda.1se") #get the coefficient using the one-standard deviation rule
+yFit_p2 = beta_p2[1,] + xTrain%*%beta_p2[-1,]
+yPred_p2 = beta_p2[1,] + xTest%*%beta_p2[-1,]
+RMSEtrain_p2 = sqrt(sum((yTrain-yFit_p2)^2)/length(yTrain))
+RMSEtest_p2 = sqrt(sum((yTest-yPred_p2)^2)/length(yTest))
+
+message(paste("Training RMSE for L2: ",RMSEtrain_p2))
+message(paste("Test RMSE for L2: ",RMSEtest_p2))
+```
+
+\newpage
+#### Problem 3 - Spline regression with L1 regularization
+
+Repeat Problem 2, this time using L1 regularization.
+
+\emph{We replicate the step used in Problem 2 with the change of $\alpha$. We set $\alpha$ to $1$ for L1-regularization or Lasso regression.}
+
+```{r spline L1}
+cv_glm_l1 = cv.glmnet(xTrain, yTrain, nfolds = 10, alpha = 1,
+                      type.measure = "default") 
+
+message(paste("The optimal Lambda for L1: ",cv_glm_l1$lambda.1se))
+#plot(cv_glm_l2)
+
+#calculate the RMSE
+beta_p3 = coef(cv_glm_l1, s = "lambda.1se") #get the coefficient using the one-standard deviation rule
+yFit_p3 = beta_p3[1,] + xTrain%*%beta_p3[-1,]
+yPred_p3 = beta_p3[1,] + xTest%*%beta_p3[-1,]
+RMSEtrain_p3 = sqrt(sum((yTrain-yFit_p3)^2)/length(yTrain))
+RMSEtest_p3 = sqrt(sum((yTest-yPred_p3)^2)/length(yTest))
+
+message(paste("Training RMSE for L1: ",RMSEtrain_p3))
+message(paste("Test RMSE for L1: ",RMSEtest_p3))
+```
+\newpage
+#### Problem 4 - Spline regression with L1 regularization with more covariates  
+
+\emph{We turned the categorical covariates in the dataset into dummy variables by follow the statistical approach of using $K-1$ dummy variables for a categorical variable with $K$ levels. The first level will be the reference category.}
+
+```{r categorical covariate function}
+#Create a function yielding categorical covariate
+onehot <- function(x){
+    levels = sort(unique(x))
+    onehotMatrix = matrix(0, length(x), length(levels)-1)
+    count = 0
+    for (level in levels[-1]){
+        count = count + 1
+        onehotMatrix[x == level, count] = 1
+    }
+    return(onehotMatrix)
+ }   
+#construct the one-hot dummies for: - the `weathersit` variable (clear weather is the reference category) - the `weekday` variable (0 = Sunday is the reference category) - the `season` variable (spring is the reference)
+    
+weatherOneHot = data.frame(onehot(bikes$weathersit))
+names(weatherOneHot) <- c("cloudy", "lightrain","heavyrain")
+bikes = cbind(bikes, weatherOneHot)
+
+weekdayOneHot = data.frame(onehot(bikes$weekday))
+names(weekdayOneHot) <- c("mon","tue","wed","thu","fri","sat")
+bikes = cbind(bikes, weekdayOneHot)
+
+seasonOneHot = data.frame(onehot(bikes$season))
+names(seasonOneHot) <- c("summer", "fall","winter")
+bikes = cbind(bikes, seasonOneHot)
+```
+
+Use `glmnet` to estimate an L1 regularized regression for the following regression model expressed for clarity as an R formula:
+
+logrides \~ s(hour) + yr + holiday + workingday + temp + atemp + hum + windspeed + weekdayDummies + seasonDummies + weatherDummies,
+
+where
+
+-   s(hour) are spline terms, so that s(hour) means adding all the splines covariates to the model, one for each knot (in addition to the linear term)
+-   weekdayDummies, seasonDummies and weatherDummies, each means to add all the one-hot covariates for each these three effects.
+
+Compute the RMSE on the training (Jan 1, 2011 - May 31, 2012) and the test data (June 1, 2012- Dec 31, 2012). Which three covariates seem to be most important in the training data?
+
+\emph{We used `glmnet` to estimate an L1 regularized regression for the aforementioned model and calculated RMSE on the training and testing data.}
+
+```{r spline L1 with more covariates, warning=FALSE}
+#DATA PREP
+#specify the covariates, just to make sure I don't miss any
+x_names = c("yr", "holiday", "workingday", "temp","atemp", "hum", "windspeed",
+            names(weatherOneHot), names(weekdayOneHot), names(seasonOneHot))
+#train data prep
+bikesTrain_p4 = bikes[bikes$dteday >= as.Date("2011-01-01") & 
+                bikes$dteday <= as.Date("2012-05-31"),] # Data from Jan 1, 2011 - May 31, 2012
+xTrain_splined = as.matrix(data_frame(ns(bikesTrain_p4$hour, df = 10), bikesTrain_p4[, x_names]))
+yTrain_p4 = bikesTrain_p4$logrides
+
+#test data prep
+bikesTest_p4 = bikes[bikes$dteday >= as.Date("2012-06-01") & 
+                  bikes$dteday <= as.Date("2012-12-31"),] # Data from June 1, 2012- Dec 31, 2012
+xTest_splined = as.matrix(data_frame(ns(bikesTest_p4$hour, df = 10), bikesTest_p4[, x_names]))
+yTest_p4 = bikesTest_p4$logrides
+
+#FIT THE MODEL
+cv_glm_l1_p4 = cv.glmnet(x = as.matrix(xTrain_splined), y = bikesTrain_p4$logrides,
+                         nfolds = 10, alpha = 0, type.measure = "default")
+beta_p4 = t(t(coef(cv_glm_l1_p4, s = "lambda.1se")))
+
+#calculate the RMSE
+yFit_p4 = beta_p4[1,] + xTrain_splined%*%beta_p4[-1,]
+yPred_p4 = beta_p4[1,] + xTest_splined%*%beta_p4[-1,]
+RMSEtrain_p4 = sqrt(sum((yTrain_p4-yFit_p4)^2)/length(yTrain_p4))
+RMSEtest_p4 = sqrt(sum((yTest_p4-yPred_p4)^2)/length(yTest_p4))
+message(paste("Training RMSE for Problem 4: ",RMSEtrain_p4))
+message(paste("Test RMSE for Problem 4: ",RMSEtest_p4))
+```
+```{r coef model problem 4}
+#print the coefficient of the regression model
+print(coef(cv_glm_l1_p4, s = "lambda.1se"))
+```
+\emph{Using training data to to estimate an L1 regularized regression,`temp`,`atemp` and `weather(lightrain)` seems to be most important covariates due to their magnitude.}
+
+\newpage
+#### Problem 5 - Time series effects in a regression
+
+So far we have ignored that the data is a time series. Let us now check if the residuals are autocorrelated, and then try to improve on the model by adding time series effects in the regression.\
+Do the following steps:
+
+a)  Plot the autocorrelation function for the residuals in the training data from the previously fitted L1-regularized regression (hint: acf()). Comment.
+
+```{r acf from problem 4}
+acf(yTrain_p4-yFit_p4)
+```
+\emph{From ACF plot, there exhibits a distinct pattern or a correlation among residuals in the training data. This pattern suggest including an autoregressive term.}
+
+b)  Plot the actual time series for the last 24\*7 observations in the dataset (the last week) and the prediction for those values in the same graph. Here you should plot the data on the original scale, i.e. plot exp(logrides) and exp() of the predictions.\
+
+```{r plot model problem 4}
+#Extract the data set for the last 24*7 observation
+x_p5b = tail(bikes, n = 24 * 7)
+#Create X Spline to recalculate the prediction line
+x_p5b_spline = as.matrix(data_frame(ns(x_p5b$hour, df = 10), x_p5b[, x_names]))
+#Calculate yFit
+yFit_p5b = beta_p4[1, ] + x_p5b_spline %*% beta_p4[-1, ]
+#Plot
+xgrid = seq(0, 1, length.out = length(yFit_p5b))
+plot( x = x_p5b$hour,y = exp(x_p5b$logrides),pch = 16, cex = 1,
+      col = "darkgray", ylab = "rides", xlab = "hour")
+lines(xgrid, exp(yFit_p5b), col = colors[4], lwd = 2)
+```
+
+c)  Add time series effects by adding the first four hourly lags and the 24th hourly lag to the set of covariates. (hint: lag() and note that you loose observations when taking lags). Fit the L1-regularized regression with all previous covariates and the new time lags. Compute RMSE in training and in test.
+
+\emph{We create relevant lagged variables and used `glmnet` to estimate an L1 regularized regression for the aforementioned model with lagged variables and calculated RMSE on the training and testing data.}
+```{r Reestimate with Lagged}
+#add first four hourly lag and 24th hourly lag eg. 2pm today, we add 1pm,13pm,11am,10am and 2pm yesterday
+#lag function doesnt work, so we use lag() from dplyr package
+bikes_5c = bikes
+bikes_5c$hourlag1 = lag(x=bikes$hour, n=1L)
+bikes_5c$hourlag2 = lag(x=bikes$hour, n=2L)
+bikes_5c$hourlag3 = lag(x=bikes$hour, n=3L)
+bikes_5c$hourlag4 = lag(x=bikes$hour, n=4L)
+bikes_5c$hourlag24 = lag(x=bikes$hour, n=24L)
+#Then we drop first 24 hr with NA
+bikes_5c <- bikes_5c[!is.na(bikes_5c$hourlag24),]
+
+#Repeat 5a by reestimating with additional 5 lag variables
+#make sure with variables
+x5c_names = c("yr", "holiday", "workingday", "temp","atemp", "hum", "windspeed",
+            "hourlag1","hourlag2","hourlag3","hourlag4","hourlag24",
+            names(weatherOneHot), names(weekdayOneHot), names(seasonOneHot))
+#train data prep
+bikesTrain_p5c = bikes_5c[bikes_5c$dteday >= as.Date("2011-01-01") & 
+                 bikes_5c$dteday <= as.Date("2012-05-31"),] # Data from Jan 1, 2011 - May 31, 2012
+xTrain_splined5c = as.matrix(data_frame(ns(bikesTrain_p5c$hour, df = 10), bikesTrain_p5c[, x5c_names]))
+yTrain_p5c = bikesTrain_p5c$logrides
+
+#test data prep
+bikesTest_p5c = bikes_5c[bikes_5c$dteday >= as.Date("2012-06-01") & 
+                bikes_5c$dteday <= as.Date("2012-12-31"),] # Data from June 1, 2012- Dec 31, 2012
+xTest_splined5c = as.matrix(data_frame(ns(bikesTest_p5c$hour, df = 10), bikesTest_p5c[, x5c_names]))
+yTest_p5c = bikesTest_p5c$logrides
+
+#FIT THE MODEL
+cv_glm_l1_p5c = cv.glmnet(x = as.matrix(xTrain_splined5c), y = bikesTrain_p5c$logrides,
+                         nfolds = 10, alpha = 1, type.measure = "default")
+beta_p5c = t(t(coef(cv_glm_l1_p5c, s = "lambda.1se")))
+print(coef(cv_glm_l1_p5c, s = "lambda.1se"))
+#calculate the RMSE
+yFit_p5c = beta_p5c[1,] + xTrain_splined5c%*%beta_p5c[-1,]
+yPred_p5c = beta_p5c[1,] + xTest_splined5c%*%beta_p5c[-1,]
+RMSEtrain_p5c = sqrt(sum((yTrain_p5c-yFit_p5c)^2)/length(yTrain_p5c))
+RMSEtest_p5c = sqrt(sum((yTest_p5c-yPred_p5c)^2)/length(yTest_p5c))
+message(paste("Training RMSE for Problem 5c: ",RMSEtrain_p5c))
+message(paste("Test RMSE for Problem 5c: ",RMSEtest_p5c))
+```
+
+d)  Plot the actual time series for the last $24 * 7 = 168$ observations in the dataset (the last week) and the prediction for those values in the same graph.
+
+```{r r plot model problem 5}
+x_p5d = tail(bikes_5c, n = 24*7) #Extract the data set for the last 24*7 observation
+x_p5d_spline = as.matrix(data_frame(ns(x_p5d$hour, df = 10), x_p5d[, x5c_names])) #Create X Spline to recalculate the prediction line
+yFit_p5d = beta_p5c[1,] + x_p5d_spline%*%beta_p5c[-1,]
+xgrid = seq(0, 1, length.out = length(yFit_p5d))
+plot(x = tail(bikes, n = 24*7)$hour, y = exp(tail(bikes, n = 24*7)$logrides),
+     pch = 16, cex = 1, col = "darkgray", ylab = "rides", xlab = "hour")
+lines(xgrid, exp(yFit_p5d), col = colors[6], lwd = 2)
+```
+\newpage
+
+#### Problem 6 - Regression trees
+
+We will now fit a regression tree.
+
+a)  Use the training dataset created in problem 5c, this time to fit regression trees from the `tree` package. Compute RMSE for the training and test sets. Use the default settings when reporting the results, but feel free to experiment with the settings to see the effect of changing them. Plot the fitted model to show the tree structure.
+
+\emph{We used `tree` package to work on our data created in problem 5c including spline variables and lagged variables. The fitted model is shown below.}
+
+```{r data setting for tree package p6, echo=FALSE, warning=FALSE}
+#We merge our split train and X spline data together, TREE package works only with dataframe
+bikesTrain_p6 = data.frame(cbind(yTrain_p5c,xTrain_splined5c))
+names(bikesTrain_p6)[1] <- "logrides"
+names(bikesTrain_p6)[2] <- "xspline1"
+names(bikesTrain_p6)[3] <- "xspline2"
+names(bikesTrain_p6)[4] <- "xspline3"
+names(bikesTrain_p6)[5] <- "xspline4"
+names(bikesTrain_p6)[6] <- "xspline5"
+names(bikesTrain_p6)[7] <- "xspline6"
+names(bikesTrain_p6)[8] <- "xspline7"
+names(bikesTrain_p6)[9] <- "xspline8"
+names(bikesTrain_p6)[10] <- "xspline9"
+names(bikesTrain_p6)[11] <- "xspline10"
+
+bikesTest_p6 = data.frame(cbind(yTest_p5c,xTest_splined5c))
+names(bikesTest_p6)[1] <- "logrides"
+names(bikesTest_p6)[2] <- "xspline1"
+names(bikesTest_p6)[3] <- "xspline2"
+names(bikesTest_p6)[4] <- "xspline3"
+names(bikesTest_p6)[5] <- "xspline4"
+names(bikesTest_p6)[6] <- "xspline5"
+names(bikesTest_p6)[7] <- "xspline6"
+names(bikesTest_p6)[8] <- "xspline7"
+names(bikesTest_p6)[9] <- "xspline8"
+names(bikesTest_p6)[10] <- "xspline9"
+names(bikesTest_p6)[11] <- "xspline10"
+```
+
+```{r estimate regression tree model, warning=FALSE}
+suppressMessages(library(tree))
+mod_p6 = tree(logrides ~ ., data = bikesTrain_p6)
+summary(mod_p6)
+#Plot the regression tree model
+plot(mod_p6)
+text(mod_p6, pretty = 0)
+#calculate the RMSE
+yFit_p6 <- predict(mod_p6, bikesTrain_p6)
+yPred_p6 <- predict(mod_p6, bikesTest_p6)
+RMSEtrain_p6 = sqrt(sum((yTrain_p5c-yFit_p6)^2)/length(yTrain_p5c)) #note that p6 and p5c are the same involving transformation from vector to dataframe
+RMSEtest_p6 = sqrt(sum((yTest_p5c-yPred_p6)^2)/length(yTest_p5c))
+
+message(paste("Training RMSE for Problem 6: ",RMSEtrain_p6))
+message(paste("Test RMSE for Problem 6: ",RMSEtest_p6))
+```
+
+b)  Plot the actual time series for the last 24∗7=168 observations in the dataset (the last week) along with the predictions from the tree model.
+```{r data setting for tree package p6b, echo=FALSE}
+x_p6b = data.frame(x_p5d_spline)
+names(x_p6b)[1] <- "xspline1"
+names(x_p6b)[2] <- "xspline2"
+names(x_p6b)[3] <- "xspline3"
+names(x_p6b)[4] <- "xspline4"
+names(x_p6b)[5] <- "xspline5"
+names(x_p6b)[6] <- "xspline6"
+names(x_p6b)[7] <- "xspline7"
+names(x_p6b)[8] <- "xspline8"
+names(x_p6b)[9] <- "xspline9"
+names(x_p6b)[10] <- "xspline10"
+```
+
+```{r fit the plot from problem 6}
+yFit_p6b = predict(mod_p6, x_p6b)
+xgrid = seq(0, 1, length.out = length(yFit_p6b))
+plot(x = tail(bikes, n = 24*7)$hour, y = exp(tail(bikes, n = 24*7)$logrides),
+     pch = 16, cex = 1, col = "darkgray", ylab = "rides", xlab = "hour")
+lines(xgrid, exp(yFit_p6b), col = colors[6], lwd = 2)
+```
+\newpage
+
+#### Problem 7 - Random forest
+
+Repeat Problem 6, this time using the random forest regression model from the `randomForest` package. No need to plot the trees or the forest, however.
+
+The default setting of the randomForest function is to train 500 trees. You can speed up the function by specifying a lower number of trees with the argument ntree.
+
+The argument sampsize allows you to train each tree using only a sample of the training set. A smaller sample size speeds up the function.
+
+You can test a few different combinations of ntree and sampsize. Is it better in terms of accuracy to train many trees, each with a smaller sample size, or to train fewer trees each with the full training set?
+
+\emph{We used `randomForest` package to work on our data created in problem 5c including spline variables and lagged variables.}
+
+```{r estimate RF, warning=FALSE}
+suppressMessages(library(randomForest))
+
+mod_p7_default <- randomForest(logrides ~ ., data = bikesTrain_p6, mtry = 3,
+                         importance = TRUE, na.action = na.omit)
+mod_p7_smallntree <- randomForest(logrides ~ ., data = bikesTrain_p6,ntree = 300, mtry = 3,
+                         importance = TRUE, na.action = na.omit)
+mod_p7_smallsampsize <- randomForest(logrides ~ ., data = bikesTrain_p6,sampsize = 3000, mtry = 3,
+                         importance = TRUE, na.action = na.omit)
+mod_p7_smallnmodsampsize <- randomForest(logrides ~ ., data = bikesTrain_p6,ntree = 300, sampsize = 8000, mtry = 3, importance = TRUE, na.action = na.omit)
+print(mod_p7_default)
+print(mod_p7_smallntree)
+print(mod_p7_smallsampsize)
+print(mod_p7_smallnmodsampsize)
+```
+
+\emph{We found that reducing the the tree trained or `ntree` wouldn't affect the accuracy much compared to reducing the sample size or `sampsize`. The optimal solution will be decrease both at the moderate level.}
+
+\newpage
+
+#### Problem 8 - XGboost
+
+Repeat Problem 6, this time using the xgboost regression model from the `xgboost` package. Use the argument nrounds = 25 when reporting the results, which means that the process iterates 25 times, but feel free to experiment with the settings to see the effect of changing them.
+
+```{r data setting for xgboost package p6, echo=FALSE}
+library(xgboost)
+xTrain_p8 = data.matrix(bikesTrain_p6[, -1])
+yTrain_p8 = data.matrix(bikesTrain_p6[,1])
+
+xTest_p8 = data.matrix(bikesTest_p6[, -1])
+yTest_p8 = data.matrix(bikesTest_p6[,1])
+
+bikesTrain_p8 = xgb.DMatrix(data = xTrain_p8, label = yTrain_p8)
+bikesTest_p8 = xgb.DMatrix(data = xTest_p8, label = yTest_p8)
+```
+
+\emph{Using data created in problem 5c, We used `xgboost` to estimate the regression model using the argument nrounds=25 and calculated RMSE on the training and testing data.}
+```{r}
+mod_p8 = xgboost(data = bikesTrain_p8, nrounds = 25)
+#calculate the RMSE
+yFit_p8 <- predict(mod_p8, bikesTrain_p8)
+yPred_p8 <- predict(mod_p8, bikesTest_p8)
+RMSEtrain_p8 = sqrt(sum((yTrain_p5c-yFit_p8)^2)/length(yTrain_p5c)) #note that p6 and p5c are the same involving transformation from vector to dataframe
+RMSEtest_p8 = sqrt(sum((yTest_p5c-yPred_p8)^2)/length(yTest_p5c))
+
+message(paste("Training RMSE for Problem 8: ",RMSEtrain_p8))
+message(paste("Test RMSE for Problem 8: ",RMSEtest_p8))
+```
