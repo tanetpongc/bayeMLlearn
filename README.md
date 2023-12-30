@@ -42,8 +42,3 @@ In **/src** directory, you will find following file
 * image
 * pracma
 * grid
-
-
-
-T
-
